@@ -1,3 +1,24 @@
+"""
+main.py
+=======
+
+Fits three chromatic (frequency-dependent) profile-evolution delay models:
+ - FD (NANOGrav 15yr log-polynomial),
+ - IFD (power-series in inverse frequency), and
+ - LIFD (Legendre series in a normalized inverse-frequency axis)
+to the same dataset in turn, and produces a comparison plot of the
+recovered profile-evolution delay vs. observing frequency for all three.
+
+For each method the script:
+    1. Loads the par/tim files and computes pre-fit residuals.
+    2. Optionally overrides the DM value with a previously-determined one.
+    3. Swaps in the relevant chromatic-delay component (FD is already
+       present in the par file; IFD/LIFD are added in its place).
+    4. Runs a weighted least-squares fit.
+    5. Extracts the fitted chromatic-delay coefficients and the implied
+       delay curve, and saves both to disk.
+"""
+
 import numpy as np
 from numpy.polynomial.legendre import legval
 from numpy.polynomial.polynomial import polyval
@@ -15,15 +36,14 @@ from utils import plot_residuals, get_dmx_params, freeze_parameters, get_FD_dela
 import sys
 
 #-----------------------------------------------------------------------------------------------------------
-# Set parameters up and load the data
+# Configuration
 #-----------------------------------------------------------------------------------------------------------
 
-# Global parameters
 PSR_name: str = "B1937+21"     # Name of the pulsar
-method: str = "LIFD"           # Method you want to use. Options: FD, IFD, LIFD
-plot_fits: bool = True         # Do you wanna plot the pre-fit and post-fit residuals?
-simulations: bool = False      # Are you running simulations as opposed to real data?
-order: int = 6                 # Order of the polynomial you want to use
+plot_fits: bool = True         # Plot the pre-fit and post-fit residuals
+simulations: bool = False      # Running on simulated data (as opposed to real data)
+order: int = 6                 # Order (number of terms) of the IFD/LIFD polynomial
+change_dm: bool = True         # Override the par-file DM with a previously fitted value
 
 # Input files
 if simulations:
@@ -34,7 +54,7 @@ else:
     timfile: str = glob(f"./NANOGrav15yr_PulsarTiming_v2.1.0/narrowband/tim/{PSR_name}_PINT_*.nb.tim")[0]
 
 #-----------------------------------------------------------------------------------------------------------
-# This is where the fun begins
+# Fit each chromatic-delay model in turn
 #-----------------------------------------------------------------------------------------------------------
 
 for i, method in enumerate(["FD", "IFD", "LIFD"]):
@@ -42,44 +62,21 @@ for i, method in enumerate(["FD", "IFD", "LIFD"]):
     print(f"Running {method}")
 
     if simulations:
-        timing_model = get_model(parfile, allow_tcb=True)  # Use allow_tcb because the simulations are made in Tempo2
+        timing_model = get_model(parfile, allow_tcb=True)  # allow_tcb because the simulations are made in Tempo2
         toas = get_TOAs(timfile, planets=True, model=timing_model, include_bipm=True)
-        mask_pint = toas.get_mjds() < 58484.0 * u.day      # Mask later TOAs because the clock corrections are no good
+        mask_pint = toas.get_mjds() < 58484.0 * u.day  # Mask later TOAs with unreliable clock corrections
         toas = toas[mask_pint]
     else:
-        timing_model = get_model(parfile)                                        # Ecliptical coordiantes
-        toas = get_TOAs(timfile, planets=True, ephem=timing_model.EPHEM.value)   # Load toas
+        timing_model = get_model(parfile)  # Ecliptic coordinates
+        toas = get_TOAs(timfile, planets=True, ephem=timing_model.EPHEM.value)  # Load TOAs
 
     if plot_fits:
-        '''
-         # Set all of the DMX parameters to zero
-        tmp_model = timing_model
-        for DMX in tmp_model.components["DispersionDMX"].params:
-            if DMX.startswith("DMX_"):
-                getattr(tmp_model, DMX).value = 0.0
-                getattr(tmp_model, DMX).uncertainty = 0.0 * getattr(tmp_model, DMX).units
-                getattr(tmp_model, DMX).frozen = False
-
-        # Freeze DMX windows without TOAs
-        tmp_model.find_empty_masks(toas, freeze=True)
-
-        # Now set the FD parameters to zero:
-        for FD in tmp_model.components["FD"].params:
-            getattr(tmp_model, FD).value = 0.0
-            getattr(tmp_model, FD).uncertainty = 0.0 * getattr(tmp_model, FD).units
-            getattr(tmp_model, FD).frozen = False
-        '''
-        # Calculate the pre-fit residuals
+        # Pre-fit residuals, with no model changes yet
         res_pint = Residuals(toas, timing_model, subtract_mean=False).time_resids.to(u.us).value
         errs_pint = toas.get_errors().value
         freqs_pint = toas.get_freqs().value
         toas_mjd_pint = toas.get_mjds().value
-        '''
-        # Weighted mean from the good TOAs only
-        weights_pint = 1.0 / errs_pint ** 2
-        res_pint -= np.average(res_pint, weights=weights_pint)
-        '''
-        # Plot the pre-fit residuals
+
         fig_aux, ax_aux = plot_residuals(toas_mjd_pint, res_pint, freqs_pint)
         ax_aux.set_title("Pre-fit", fontsize=14)
         plt.tight_layout()
@@ -87,49 +84,45 @@ for i, method in enumerate(["FD", "IFD", "LIFD"]):
         plt.show()
         plt.close(fig_aux)
 
-    # We'll use the variables to store the delay due to DM, profile evolution, and both
+    # We'll use these to store the dispersive delay, profile-evolution delay, and their sum
     new_dmx_dispersion_delays_us = np.zeros(toas.ntoas)
     prof_evol_delay_us = np.zeros(toas.ntoas)
     total_delay = np.zeros(toas.ntoas)
 
-    #-----------------------------------------------------------------------------------------------------------
-    # Change the DM so that the epoch-wise correcitons are smaller. See DM_search.py to see how I did this.
-    #-----------------------------------------------------------------------------------------------------------
-    change_dm = True
+    # -----------------------------------------------------------------------------------------------------------
+    # Optionally override the DM so that the epoch-wise corrections are smaller (see DM_search.py).
+    # -----------------------------------------------------------------------------------------------------------
     if change_dm:
         DM_value = np.load(f"./results/{PSR_name}/new_DM.npy").item()
         DM_param = {"DM": (DM_value * timing_model.DM.units, 1, 0 * timing_model.DM.units)}
 
-        # Change the DM value to the updated one
         for name, info in DM_param.items():
             par = getattr(timing_model, name)  # Get parameter object from name
-            par.value = info[0]  # set parameter value
+            par.value = info[0]                # Set parameter value
             if info[1] == 1:
-                par.frozen = False  # Frozen means do not fit
-            par.uncertainty = info[2]  # set parameter uncertainty
+                par.frozen = False             # info[1] == 1 means "let this be fit"
+            par.uncertainty = info[2]          # Set parameter uncertainty
 
     # Fix the DM value so that it is not included in the timing fit
-    getattr(timing_model, 'DM').frozen = False
+    getattr(timing_model, 'DM').frozen = True
 
     #-----------------------------------------------------------------------------------------------------------
-    # Set up the IFD or LIFD model
+    # Swap in the IFD or LIFD chromatic-delay component (FD is already present in the par file)
     #-----------------------------------------------------------------------------------------------------------
     if method == "IFD" or method == "LIFD":
-        timing_model.remove_component("FD")  # Remove the FD model
+        timing_model.remove_component("FD")
 
-        # The LIFD component expects to define its λ→x mapping at setup(), which requires TOAs.
-        # Therefore, we will attach TOAs to the model before adding LIFD:
+        # LIFD defines its λ→x mapping at setup(), which requires TOAs, so attach them to the model beforehand.
         timing_model.toas = toas
 
-        # Add the IFD or LIFD parameters
         if method == "IFD":
             from IFD_class import IFD
-            timing_model.add_component(IFD(order=order))  # Attach the IFD component
-            freeze_parameters(timing_model, ['IFD0'])   # AIC is telling us this term does not matter
+            timing_model.add_component(IFD(order=order))
+            freeze_parameters(timing_model, ['IFD0'])  # AIC indicates this term does not matter
 
         elif method == "LIFD":
             from LIFD_class import LIFD
-            timing_model.add_component(LIFD(order=order))   # Attach the LIFD component
+            timing_model.add_component(LIFD(order=order))
 
     #-----------------------------------------------------------------------------------------------------------
     # Fit the timing model
@@ -138,7 +131,6 @@ for i, method in enumerate(["FD", "IFD", "LIFD"]):
     f.fit_toas()
     fitted_model = f.model
 
-    # Plot the post-fit residuals
     if plot_fits:
         fig_aux, ax_aux = plot_residuals(toas_mjd_pint, f.resids.time_resids, freqs_pint)
         ax_aux.set_title(f"Post-Fit | {method}", fontsize=14)
@@ -147,80 +139,71 @@ for i, method in enumerate(["FD", "IFD", "LIFD"]):
         plt.show()
         plt.close(fig_aux)
 
-    #-----------------------------------------------------------------------------------------------------------
-    # Calculate the timing delays and save the coefficients
-    #-----------------------------------------------------------------------------------------------------------
-    freq_GHz = toas.get_freqs().to(u.GHz)    # Frequencies in GHz
-    freq_rounded = np.round(freq_GHz, decimals=3).value
-    unique_freqs = np.unique(freq_rounded)  # Find and return the sorted unique elements
-    freq_GHz = unique_freqs * u.GHz
-
-    # Set up the plotting
+    # -----------------------------------------------------------------------------------------------------------
+    # Extract the fitted chromatic-delay coefficients and the implied delay curve
+    # -----------------------------------------------------------------------------------------------------------
+    # Set up the comparison plot
     sns.set_context("paper", font_scale=1.50, rc={"lines.linewidth": 2.5})
     fig, ax = plt.subplots(1, 1)
-    ax2 = ax.twinx()  # instantiate a second Axes that shares the same x-axis
+    ax2 = ax.twinx()  # second y-axis, shared x-axis
     colors = plt.colormaps['Paired'](range(8))
     colors = [colors[6], colors[7], colors[0], colors[1], colors[2], colors[3]]
 
+    freq_GHz = toas.get_freqs().to(u.GHz)
+    freq_rounded = np.round(freq_GHz, decimals=3).value
+    unique_freqs = np.unique(freq_rounded)  # Sorted, de-duplicated channel frequencies
+    freq_GHz = unique_freqs * u.GHz
+
     if method == "FD":
-        # For plotting later
         x_var = np.sort(freq_GHz.value)
         ax.set_xlabel("$\\nu$ [GHz]")
 
-        # Extract and save the FD coefficients
-        FD_coeffs = [getattr(fitted_model, FD_param).value for FD_param in fitted_model.components['FD'].params]  # seconds
+        FD_coeffs = [getattr(fitted_model, FD_param).value for FD_param in
+                     fitted_model.components['FD'].params]  # seconds
         np.save(f"./results/{PSR_name}/FD_coeffs.npy", FD_coeffs)
 
-        # Calculate the delay due to pulse profile evolution as a function of frequency
-        # Because of how I get_FD_delay is set up, this will automatically have units of microseconds
+        # get_FD_delay returns microseconds already (see utils.py)
         prof_evol_delay_us = get_FD_delay(FD_coeffs, x_var)
 
     elif method == "IFD":
-        # For plotting later
         x_var = np.sort(IFD.get_lambda_ns_from_freq(freq_GHz))  # Inverse frequencies
         ax.set_xlabel("$\lambda$")
 
-        # Extract and save the IFD coefficients
         IFD_coeffs = [getattr(fitted_model, f"IFD{deg}").value for deg in range(0, order)]
         np.save(f"./results/{PSR_name}/IFD_coeffs.npy", IFD_coeffs)
 
-        # Calculate the delay due to pulse profile evolution as a function of frequency
-        # This will automatically have units of seconds because the coefficients have units of seconds
+        # Coefficients are in seconds, so the polynomial evaluates to seconds -> convert to us
         prof_evol_delay_us = (polyval(x=x_var, c=IFD_coeffs) * u.second).to(u.us)
 
     elif method == "LIFD":
-        # For plotting later
-        lambdas_sec = LIFD.get_lambda_sec_from_freq(freq_GHz)  # Inverse frequencies
+        lambdas_sec = LIFD.get_lambda_sec_from_freq(freq_GHz)  # Inverse frequencies, in seconds
         lifd_comp = fitted_model.components["LIFD"]
         x_var = np.sort(lifd_comp.map_lambda_to_unit(lambdas_sec, lifd_comp.lmin, lifd_comp.lmax))
         ax.set_xlabel("x")
 
-        # Extract and save the LIFD coefficients
         LIFD_coeffs = [getattr(fitted_model, f"LIFD{i}").value for i in range(0, order)]
         np.save(f"./results/{PSR_name}/LIFD_coeffs.npy", LIFD_coeffs)
 
-        # Calculate the delay due to pulse profile evolution as a function of frequency
         prof_evol_delay_us = (legval(x_var, LIFD_coeffs) * u.second).to(u.us)
 
     else:
         print("Method not recognized")
         sys.exit(1)
 
+    # Dispersive (DMX) delay at each unique frequency, mean-subtracted for comparability with prof_evol_delay_us
+    new_DMX_component = fitted_model.components["DispersionDMX"]
+    new_dmx_dispersion_delays_us = new_DMX_component.DMX_dispersion_delay(toas).to(u.us)
+    new_dmx_dispersion_delay_means = np.array([new_dmx_dispersion_delays_us.value[freq_rounded == f].mean() for f in unique_freqs])
+    new_dmx_dispersion_delay_means -= np.mean(new_dmx_dispersion_delay_means)
 
     if simulations:
-        # Calculate the dispersive delay as a function of frequency
-        new_DMX_component = fitted_model.components["DispersionDMX"]
-        new_dmx_dispersion_delays_us = new_DMX_component.DMX_dispersion_delay(toas).to(u.us)
-        new_dmx_dispersion_delay_means = np.array([new_dmx_dispersion_delays_us.value[freq_rounded == f].mean() for f in unique_freqs])
-        new_dmx_dispersion_delay_means -= np.mean(new_dmx_dispersion_delay_means)
-
-        # Calculate the total chromatic delay
-        total_delay = new_dmx_dispersion_delay_means + prof_evol_delay_us
+        # Compare the recovered profile-evolution delay, dispersive delay, and their sum
+        total_delay_sim = new_dmx_dispersion_delay_means + prof_evol_delay_us.value
 
         fig_aux, ax_aux = plt.subplots(1, 1)
         ax_aux.plot(unique_freqs, prof_evol_delay_us, label="Profile Evolution", ls='--', color="C0")
         ax_aux.plot(unique_freqs, new_dmx_dispersion_delay_means, label="DMX", ls=':', color="C1")
-        ax_aux.plot(unique_freqs, total_delay, label="Total", ls='-', color="C2")
+        ax_aux.plot(unique_freqs, total_delay_sim, label="Total", ls='-', color="C2")
         ax_aux.set_xlabel("$\\nu$ [GHz]")
         ax_aux.set_ylabel("Delay [us]")
         plt.title(method)
@@ -230,44 +213,32 @@ for i, method in enumerate(["FD", "IFD", "LIFD"]):
         plt.show()
         plt.close(fig_aux)
 
-
     #-----------------------------------------------------------------------------------------------------------
-    # Calculate the dispersive delay and save the DMX parameters
+    # Save the fitted DMX parameters
     #-----------------------------------------------------------------------------------------------------------
     DMX_params = get_dmx_params(fitted_model)
     DMX_params.to_pickle(f"./results/{PSR_name}/{method}_DMX.pkl")
 
-    new_DMX_component = fitted_model.components["DispersionDMX"]
-    new_dmx_dispersion_delays_us = new_DMX_component.DMX_dispersion_delay(toas).to(u.us)
-    new_dmx_dispersion_delay_means = np.array([new_dmx_dispersion_delays_us.value[freq_rounded == f].mean() for f in unique_freqs])
-    new_dmx_dispersion_delay_means -= np.mean(new_dmx_dispersion_delay_means)
-
-    #-----------------------------------------------------------------------------------------------------------
-    # Calculate and plot the total delay
-    #-----------------------------------------------------------------------------------------------------------
+    # -----------------------------------------------------------------------------------------------------------
+    # Compute and plot the total chromatic delay (profile evolution + dispersion) vs. frequency
+    # -----------------------------------------------------------------------------------------------------------
     total_delay = prof_evol_delay_us.value + new_dmx_dispersion_delay_means
-#    total_delay = total_delay.value
     total_delay -= np.mean(total_delay)
-
-    # Sort the frequencies and timing delays
-    #sort_idx = np.argsort(freq_GHz)
-    #sorted_freqs = freq_GHz[sort_idx]
-    #sorted_delays = total_delay[sort_idx]
 
     # Round frequencies to nearest channel to group identical frequencies
     freq_rounded = np.round(freq_GHz, decimals=3).value
-    unique_freqs = np.unique(freq_rounded)  # Find and return the sorted unique elements
+    unique_freqs = np.unique(freq_rounded)
 
-    # Detect gaps: define a gap as any jump larger than some threshold
-    gap_threshold = 0.05  # GHz — adjust based on your channel spacing
+    # Detect gaps in frequency coverage so the plotted line doesn't bridge them
+    gap_threshold = 0.05  # GHz -- adjust based on receiver channel spacing
     diffs = np.diff(unique_freqs)
-    gap_indices = np.where(diffs > gap_threshold)[0] + 1  # indices where gaps start
+    gap_indices = np.where(diffs > gap_threshold)[0] + 1
 
     # Insert NaNs at gap locations
     freqs_with_nans = np.insert(unique_freqs, gap_indices, np.nan)
 
     total_delays_means = np.array([total_delay[freq_rounded == f].mean() for f in unique_freqs])
-    total_delays_means_with_nans = np.insert(total_delays_means, gap_indices, np.nan)   # To avoid gaps in frequency coverage
+    total_delays_means_with_nans = np.insert(total_delays_means, gap_indices, np.nan)
 
     total_delays_stds = np.array([total_delay[freq_rounded == f].std() for f in unique_freqs])
     total_delays_stds_with_nans = np.insert(total_delays_stds, gap_indices, np.nan)
@@ -276,20 +247,22 @@ for i, method in enumerate(["FD", "IFD", "LIFD"]):
     prof_evol_delay_means -= np.mean(prof_evol_delay_means)
     prof_evol_delay_means_with_nans = np.insert(prof_evol_delay_means, gap_indices, np.nan)
 
-#    new_dmx_dispersion_delay_means = np.array([new_dmx_dispersion_delays_us.value[freq_rounded == f].mean() for f in unique_freqs])
-#    new_dmx_dispersion_delay_means -= np.mean(new_dmx_dispersion_delay_means)
     new_dmx_dispersion_delay_means_with_nans = np.insert(new_dmx_dispersion_delay_means, gap_indices, np.nan)
 
-    # Plot the total chromatic delay
-    ax.plot(freqs_with_nans, total_delays_means_with_nans, ls='-', color=colors[2*i+1], label=f"{method}", alpha=0.6)
+    # Total delay (for this method), with shaded +/- 1 std band
+    ax.plot(freqs_with_nans, total_delays_means_with_nans, ls='-', color=colors[2 * i + 1], label=f"{method}",
+            alpha=0.6)
     ax.fill_between(freqs_with_nans,
                     total_delays_means_with_nans - total_delays_stds_with_nans,
-                    total_delays_means_with_nans + total_delays_stds_with_nans, color=colors[2*i+1], alpha=0.1)
+                    total_delays_means_with_nans + total_delays_stds_with_nans, color=colors[2 * i + 1], alpha=0.1)
 
-    # Plot the delays due to the individual components
-    ax2.plot(freqs_with_nans, prof_evol_delay_means_with_nans, ls='--', color=colors[2*i])
-    ax2.plot(freqs_with_nans, new_dmx_dispersion_delay_means_with_nans , ls=':', color=colors[2*i])
+    # Individual components (profile evolution, DMX), on the secondary axis
+    ax2.plot(freqs_with_nans, prof_evol_delay_means_with_nans, ls='--', color=colors[2 * i])
+    ax2.plot(freqs_with_nans, new_dmx_dispersion_delay_means_with_nans, ls=':', color=colors[2 * i])
 
+#-----------------------------------------------------------------------------------------------------------
+# Finalize and save the comparison plot
+#-----------------------------------------------------------------------------------------------------------
 ax.set_xlabel("$\\nu$ [GHz]")
 ax.set_ylabel("Total delay [$\mu$s]")
 ax2.set_ylabel("Individual components delays [$\mu$s]")
