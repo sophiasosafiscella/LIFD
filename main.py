@@ -1,5 +1,3 @@
-
-
 import numpy as np
 from numpy.polynomial.legendre import legval
 from numpy.polynomial.polynomial import polyval
@@ -32,8 +30,8 @@ if simulations:
     parfile: str = f"./simulations/simplified_timing_model_pint.par"
     timfile: str = f"./simulations/timfile_freq_nofreqev.tim"
 else:
-    parfile: str = glob(f"./NANOGrav15yr_PulsarTiming_v2.0.1/narrowband/par/{PSR_name}_PINT_*.nb.par")[0]
-    timfile: str = glob(f"./NANOGrav15yr_PulsarTiming_v2.0.1/narrowband/tim/{PSR_name}_PINT_*.nb.tim")[0]
+    parfile: str = glob(f"./NANOGrav15yr_PulsarTiming_v2.1.0/narrowband/par/{PSR_name}_PINT_*.nb.par")[0]
+    timfile: str = glob(f"./NANOGrav15yr_PulsarTiming_v2.1.0/narrowband/tim/{PSR_name}_PINT_*.nb.tim")[0]
 
 #-----------------------------------------------------------------------------------------------------------
 # This is where the fun begins
@@ -276,8 +274,8 @@ for i, method in enumerate([method]):
     prof_evol_delay_means -= np.mean(prof_evol_delay_means)
     prof_evol_delay_means_with_nans = np.insert(prof_evol_delay_means, gap_indices, np.nan)
 
-    new_dmx_dispersion_delay_means = np.array([new_dmx_dispersion_delays_us.value[freq_rounded == f].mean() for f in unique_freqs])
-    new_dmx_dispersion_delay_means -= np.mean(new_dmx_dispersion_delay_means)
+#    new_dmx_dispersion_delay_means = np.array([new_dmx_dispersion_delays_us.value[freq_rounded == f].mean() for f in unique_freqs])
+#    new_dmx_dispersion_delay_means -= np.mean(new_dmx_dispersion_delay_means)
     new_dmx_dispersion_delay_means_with_nans = np.insert(new_dmx_dispersion_delay_means, gap_indices, np.nan)
 
     # Plot the total chromatic delay
