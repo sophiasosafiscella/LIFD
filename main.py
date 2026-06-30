@@ -19,7 +19,6 @@ For each method the script:
        delay curve, and saves both to disk.
 """
 
-
 import numpy as np
 from numpy.polynomial.legendre import legval
 from numpy.polynomial.polynomial import polyval
@@ -41,7 +40,7 @@ import sys
 #-----------------------------------------------------------------------------------------------------------
 
 PSR_name: str = "B1937+21"     # Name of the pulsar
-plot_fits: bool = True         # Plot the pre-fit and post-fit residuals
+plot_fits: bool = False         # Plot the pre-fit and post-fit residuals
 simulations: bool = False      # Running on simulated data (as opposed to real data)
 order: int = 6                 # Order (number of terms) of the IFD/LIFD polynomial
 change_dm: bool = True         # Override the par-file DM with a previously fitted value
@@ -53,6 +52,13 @@ if simulations:
 else:
     parfile: str = glob(f"./NANOGrav15yr_PulsarTiming_v2.1.0/narrowband/par/{PSR_name}_PINT_*.nb.par")[0]
     timfile: str = glob(f"./NANOGrav15yr_PulsarTiming_v2.1.0/narrowband/tim/{PSR_name}_PINT_*.nb.tim")[0]
+
+# Set up the comparison plot
+sns.set_context("paper", font_scale=1.50, rc={"lines.linewidth": 2.5})
+fig, ax = plt.subplots(1, 1)
+ax2 = ax.twinx()  # second y-axis, shared x-axis
+colors = plt.colormaps['Paired'](range(8))
+colors = [colors[6], colors[7], colors[0], colors[1], colors[2], colors[3]]
 
 #-----------------------------------------------------------------------------------------------------------
 # Fit each chromatic-delay model in turn
@@ -143,13 +149,6 @@ for i, method in enumerate(["FD", "IFD", "LIFD"]):
     # -----------------------------------------------------------------------------------------------------------
     # Extract the fitted chromatic-delay coefficients and the implied delay curve
     # -----------------------------------------------------------------------------------------------------------
-    # Set up the comparison plot
-    sns.set_context("paper", font_scale=1.50, rc={"lines.linewidth": 2.5})
-    fig, ax = plt.subplots(1, 1)
-    ax2 = ax.twinx()  # second y-axis, shared x-axis
-    colors = plt.colormaps['Paired'](range(8))
-    colors = [colors[6], colors[7], colors[0], colors[1], colors[2], colors[3]]
-
     freq_GHz = toas.get_freqs().to(u.GHz)
     freq_rounded = np.round(freq_GHz, decimals=3).value
     unique_freqs = np.unique(freq_rounded)  # Sorted, de-duplicated channel frequencies
