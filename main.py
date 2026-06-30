@@ -37,7 +37,9 @@ else:
 # This is where the fun begins
 #-----------------------------------------------------------------------------------------------------------
 
-for i, method in enumerate([method]):
+for i, method in enumerate(["FD", "IFD", "LIFD"]):
+
+    print(f"Running {method}")
 
     if simulations:
         timing_model = get_model(parfile, allow_tcb=True)  # Use allow_tcb because the simulations are made in Tempo2

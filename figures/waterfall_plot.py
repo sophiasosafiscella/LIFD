@@ -9,8 +9,6 @@ import astropy.units as units
 from tqdm import tqdm
 from IFD_class import IFD
 from LIFD_class import LIFD
-from pypulse.par import Par
-import sys
 
 # Compatibility shim for pypulse with newer NumPy versions.
 # pypulse still calls np.trapz(), which was removed in recent NumPy releases.
@@ -72,17 +70,6 @@ def main():
     """Main execution function for DM optimization using golden section search."""
     # Set up parameters and files
     psr_name: str = "B1937+21"
-#    psr_name: str = "J0610-2100"
-#    psr_name: str = "J1713+0747"
-#    psr_name = "J1909-3744"
-#    psr_name = "J1918-0642"
-#    psr_name = "J1744-1134"
-#    psr_name: str = "J1012+5307"
-#    psr_name: str = "J1022+1001"
-#    psr_name: str = "J1024-0719"
-#    psr_name: str = "J1643-1224"
-#    psr_name = "J2145-0750"
-#    psr_name: str = "J2302+4442"
 
     ar_files = glob(f"../DM_calculations/{psr_name}/ff_files/*.ff")  # FF files
 
@@ -124,7 +111,7 @@ def main():
     axs[0].set_ylabel("Intensity")
 
     # Load the template
-    template_dir = "../NANOGrav15yr_PulsarTiming_v2.0.1/narrowband/template/"
+    template_dir = "../NANOGrav15yr_PulsarTiming_v2.1.0/narrowband/template/"
     template_profile = load_template_profile(psr_name, template_dir)
 
     # If we haven't figured out which FF file has the maximum S/N yet, then calculate it
@@ -176,9 +163,8 @@ def main():
     FD_coeffs = np.load(f"../results/{psr_name}/FD_coeffs.npy")
     FD_delays = get_FD_delay(FD_coeffs, freq_Ghz.value)
 
-
     # IFD curve
-    IFD_coeffs = np.load(f"../results/{psr_name}/new_IFD_coeffs.npy")
+    IFD_coeffs = np.load(f"../results/{psr_name}/IFD_coeffs.npy")
     lambdas_ns = IFD.get_lambda_ns_from_freq(freq_Ghz)  # Inverse frequencies
     IFD_delays = get_IFD_values(IFD_coeffs, lambdas_ns).to(units.us)
 
@@ -189,7 +175,7 @@ def main():
     x_vals = np.sort(LIFD.map_lambda_to_unit(lambdas, lmin, lmax))  # fixed mapping set in setup()
 
     # Get the delays calculated by the LIFD polynomial
-    LIFD_coeffs = np.load(f"../results/{psr_name}/new_LIFD_coeffs.npy")
+    LIFD_coeffs = np.load(f"../results/{psr_name}/LIFD_coeffs.npy")
     LIFD_delays = legval(x_vals, LIFD_coeffs) * 1e6 * units.us         # Delays in microseconds
 
     mid_idx = len(freq_Mhz) // 2
