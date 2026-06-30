@@ -19,6 +19,7 @@ For each method the script:
        delay curve, and saves both to disk.
 """
 
+
 import numpy as np
 from numpy.polynomial.legendre import legval
 from numpy.polynomial.polynomial import polyval

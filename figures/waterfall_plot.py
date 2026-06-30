@@ -99,9 +99,6 @@ def main():
     else:
         max_snr = None
 
-    #sns.set_style("ticks", {"axes.grid": True})
-    #sns.set_context("paper", font_scale=1.5, rc={"lines.linewidth": 2.5, "axes.labelsize": 20, "axes.titlesize": 20})
-
     sns.set_style("ticks")
     sns.set_context("paper", font_scale=2.0, rc={"lines.linewidth": 2.5})
 
